@@ -14,9 +14,9 @@ An osu!lazer custom ruleset that adds Mod Select into Editor so you can test pla
 
 ### Installation script (recommended)
 
-Download and run the [`installer script` (Windows)](https://raw.githubusercontent.com/fuyukiSmkw/osu-EditorModdedTestPlay/refs/heads/main/osu.Game.Rulesets.EditorModdedTestPlay.installer.bat) or [`installer script` (Linux/Mac)](https://raw.githubusercontent.com/fuyukiSmkw/osu-EditorModdedTestPlay/refs/heads/main/osu.Game.Rulesets.EditorModdedTestPlay.installer.sh).
+Download and run the [`installer script` (Windows)](https://github.com/fuyukiSmkw/osu-EditorModdedTestPlay/releases/latest/download/osu.Game.Rulesets.EditorModdedTestPlay.installer.bat) or [`installer script` (Linux/Mac)](https://github.com/fuyukiSmkw/osu-EditorModdedTestPlay/releases/latest/download/osu.Game.Rulesets.EditorModdedTestPlay.installer.sh).
 
-Similarly you can use [`uninstaller script` (Windows)](https://raw.githubusercontent.com/fuyukiSmkw/osu-EditorModdedTestPlay/refs/heads/main/osu.Game.Rulesets.EditorModdedTestPlay.uninstaller.bat) or [`uninstaller script` (Linux/Mac)](https://raw.githubusercontent.com/fuyukiSmkw/osu-EditorModdedTestPlay/refs/heads/main/osu.Game.Rulesets.EditorModdedTestPlay.uninstaller.sh).
+Similarly you can use [`uninstaller script` (Windows)](https://github.com/fuyukiSmkw/osu-EditorModdedTestPlay/releases/latest/download/osu.Game.Rulesets.EditorModdedTestPlay.uninstaller.bat) or [`uninstaller script` (Linux/Mac)](https://github.com/fuyukiSmkw/osu-EditorModdedTestPlay/releases/latest/download/osu.Game.Rulesets.EditorModdedTestPlay.uninstaller.sh).
 
 ### Manual install
 
