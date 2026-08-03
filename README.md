@@ -10,6 +10,10 @@
 
 An osu!lazer custom ruleset that adds Mod Select into Editor so you can test play with mods.
 
+## Showcase
+
+![](https://github.com/fuyukiSmkw/picx-images-hosting/raw/master/osu-EditorModdedTestPlay.6bhsbf2ckn.gif)
+
 ## Install & Uninstall
 
 ### Installation script (recommended)
