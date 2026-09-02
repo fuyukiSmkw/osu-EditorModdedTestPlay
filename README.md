@@ -43,6 +43,20 @@ dotnet build -c Release
 
 Or `dotnet build` for a debug build.
 
+### Build with local osu git repo
+
+For situations like Tachyon releases when the NuGet package is not latest.
+
+```sh
+git pull origin tachyon
+git switch tachyon
+
+# Edit csproj to refer to your local osu.Game.csproj
+editor osu.Game.Rulesets.EditorModdedTestPlay/osu.Game.Rulesets.EditorModdedTestPlay.csproj
+
+dotnet build -c Release
+```
+
 ## Acknowledgements
 
 * [ppy/osu](https://github.com/ppy/osu): The official osu!lazer project
