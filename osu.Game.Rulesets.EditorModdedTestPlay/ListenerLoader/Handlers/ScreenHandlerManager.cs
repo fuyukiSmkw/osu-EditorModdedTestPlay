@@ -26,6 +26,7 @@ public partial class ScreenHandlerManager : AbstractHandler
             Logging.Log("hookScreenStack failed!");
 
         addHandler(new ModdedEditorHandler());
+        addHandler(new ModdedEditorPlayerLoaderHandler());
     }
 
     private void addHandler(AbstractScreenHandler handler)
