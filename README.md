@@ -35,7 +35,7 @@ For uninstallation, delete the `.dll` file.
 
 ## Build
 
-Requires .NET `8.0` or higher.
+Requires .NET `10.0` or higher.
 
 ```bash
 dotnet build -c Release
