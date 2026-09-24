@@ -1,18 +1,26 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using osu.Framework.Allocation;
 using osu.Framework.Bindables;
+using osu.Framework.Extensions.IEnumerableExtensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
+using osu.Framework.Graphics.UserInterface;
+using osu.Framework.Input.Events;
 using osu.Framework.Screens;
 using osu.Framework.Testing;
+using osu.Game.Graphics;
+using osu.Game.Graphics.Sprites;
 using osu.Game.Graphics.UserInterface;
 using osu.Game.Graphics.UserInterfaceV2;
+using osu.Game.Overlays;
 using osu.Game.Overlays.Mods;
 using osu.Game.Rulesets.EditorModdedTestPlay.ListenerLoader.Utils;
 using osu.Game.Screens.Edit;
 using osu.Game.Screens.Edit.Components;
 using osu.Game.Screens.Edit.Components.Menus;
+using osuTK.Graphics;
 
 #nullable enable
 
@@ -48,20 +56,10 @@ public partial class ModdedEditor(EditorLoader? loader = null) : Editor(loader)
         Mods.Disabled = false;
     }
 
-    // the old way: modified tabs
-    /* public partial class ModdedPlaybackTabControl : PlaybackControl.PlaybackTabControl
+    public partial class ModdedPlaybackTabControl : PlaybackControl.PlaybackTabControl
     {
         private static readonly double[] old_tempo_values = [0.25, 0.5, 0.75, 1];
-        private static readonly double[] new_tempo_values = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-
-        public partial class ModdedPlaybackTabItem(double value) : PlaybackTabItem(value)
-        {
-            [BackgroundDependencyLoader]
-            private void load()
-            {
-                Width = 1f / new_tempo_values.Length;
-            }
-        }
+        private static readonly double[] new_tempo_values = [0.25, 0.5, 0.75, 1, 1.5, 3];
 
         protected override TabItem<double> CreateTabItem(double value) => new ModdedPlaybackTabItem(value);
 
@@ -73,7 +71,21 @@ public partial class ModdedEditor(EditorLoader? loader = null) : Editor(loader)
             Height = 16;
             Current = tempoAdjustment;
         }
-    }*/
+
+        public partial class ModdedPlaybackTabItem(double value) : PlaybackTabItem(value)
+        {
+            private double v = value;
+
+            [BackgroundDependencyLoader]
+            private void load()
+            {
+                Width = 1f / new_tempo_values.Length;
+                var text = (OsuSpriteText)this.FindInstance("text")!;
+                var textBold = (OsuSpriteText)this.FindInstance("textBold")!;
+                text.Text = textBold.Text = v.ToString("#.###", CultureInfo.InvariantCulture).TrimEnd('.');
+            }
+        }
+    }
 
     public partial class PlaybackSpeedSliderBar : FormSliderBar<double>
     {
@@ -85,10 +97,33 @@ public partial class ModdedEditor(EditorLoader? loader = null) : Editor(loader)
 
             Current = tempoAdjustment;
             RelativeSizeAxes = Axes.X;
-            Caption = "Speed";
+            // Caption = "Speed";
             TransferValueOnCommit = false;
             KeyboardStep = 0.1f; // 0.1x per <-/-> press
             LabelFormat = v => $"{v:N2}x";
+            Height = 36;
+        }
+
+        [BackgroundDependencyLoader]
+        private void load()
+        {
+            var c = (Container)InternalChildren[1];
+            c.Padding = new MarginPadding
+            {
+                Left = 8,
+                Right = 4,
+                Vertical = 4,
+            };
+            var s = c.ChildrenOfType<InnerSlider>().FirstOrDefault()!;
+            s.Height = 20;
+            s.Width = 0.67f;
+            var f = c.ChildrenOfType<FillFlowContainer>().FirstOrDefault()!;
+            f.Width = 0.33f;
+            f.Padding = new MarginPadding(0);
+            f.Anchor = Anchor.CentreLeft;
+            f.Origin = Anchor.CentreLeft;
+            var cap = f.ChildrenOfType<FormFieldCaption>().FirstOrDefault();
+            cap?.Expire();
         }
     }
 
@@ -107,12 +142,21 @@ public partial class ModdedEditor(EditorLoader? loader = null) : Editor(loader)
         var tempoAdjustment = (BindableNumber<double>)(playbackControl.FindInstance("tempoAdjustment") ?? throw new NullDependencyException("tempoAdjustment not found in playbackControl!"));
         var playbackSpeedControl = (CompositeDrawable)(playbackControl.FindInstance("playbackSpeedControl") ?? throw new NullDependencyException("playbackSpeedControl not found in playbackControl!"));
 
-        // the old way: modified tabs
-        /* var oldPlaybackTabControl = playbackSpeedControl.ChildrenOfType<PlaybackControl.PlaybackTabControl>().FirstOrDefault() ?? throw new NullDependencyException("PlaybackTabControl not found in Editor!");
-        (playbackSpeedControl.FindMethod("RemoveInternal", typeof(bool)) ?? throw new NullDependencyException("Method RemoveInternal not found in PlaybackSpeedControl!"))([oldPlaybackTabControl, true]);
-        // (playbackSpeedControl.FindMethod("AddInternal", typeof(bool)) ?? throw new NullDependencyException("Method AddInternal not found in PlaybackSpeedControl!"))([new ModdedPlaybackTabControl(tempoAdjustment)]); */
         (playbackSpeedControl.FindMethod("ClearInternal", typeof(bool)) ?? throw new NullDependencyException("Method ClearInternal not found in PlaybackSpeedControl!"))([true]); // remove all children
-        (playbackSpeedControl.FindMethod("AddInternal", typeof(bool)) ?? throw new NullDependencyException("Method AddInternal not found in PlaybackSpeedControl!"))([new PlaybackSpeedSliderBar(tempoAdjustment)]);
+        FillFlowContainer c = new()
+        {
+            Direction = FillDirection.Vertical,
+            RelativeSizeAxes = Axes.X,
+            Height = 50,
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Children =
+            [
+                new ModdedPlaybackTabControl(tempoAdjustment),
+                new PlaybackSpeedSliderBar(tempoAdjustment),
+            ]
+        };
+        (playbackSpeedControl.FindMethod("AddInternal", typeof(bool)) ?? throw new NullDependencyException("Method AddInternal not found in PlaybackSpeedControl!"))([c]);
     }
 
 
