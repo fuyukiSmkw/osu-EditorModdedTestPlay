@@ -34,10 +34,30 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             return hidden?.RulesetInfo;
         }
 
+        /// <summary>
+        /// Creates a <see cref="RulesetInfo"/> for the hidden ruleset which can be used where a
+        /// distinct <see cref="RulesetInfo"/> instance is required.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="RulesetInfo"/> equality is based on <see cref="RulesetInfo.ShortName"/>, so the
+        /// short name is made distinct here. This allows binding the result into a
+        /// <c>Bindable&lt;RulesetInfo&gt;</c> (for example the mod select footer's multiplier source)
+        /// and actually receiving a change notification when switching between normal and stable-V2 rulesets.
+        /// </remarks>
+        public static RulesetInfo? CreateDisplayInfo(RulesetInfo? original)
+        {
+            RulesetInfo? info = CreateInfo(original);
+            if (info == null)
+                return null;
+
+            info.ShortName += "-scorev2-display";
+            return info;
+        }
+
         public sealed class HiddenOsuRuleset : OsuRuleset
         {
             public override ScoreProcessor CreateScoreProcessor() => new StableOsuScoreV2ScoreProcessor(this);
-            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableScoreV2MultiplierCalculator(context);
+            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableOsuScoreV2MultiplierCalculator(context);
             public override IBeatmapConverter CreateBeatmapConverter(IBeatmap beatmap) => new StableOsuBeatmapConverter(beatmap, this);
             public override IBeatmapProcessor CreateBeatmapProcessor(IBeatmap beatmap) => new StableOsuBeatmapProcessor(beatmap);
         }
@@ -45,19 +65,19 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         public sealed class HiddenTaikoRuleset : TaikoRuleset
         {
             public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
-            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new ScoreMultiplierCalculator(context);
+            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableTaikoScoreV2MultiplierCalculator(context);
         }
 
         public sealed class HiddenCatchRuleset : CatchRuleset
         {
             public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
-            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new ScoreMultiplierCalculator(context);
+            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableCatchScoreV2MultiplierCalculator(context);
         }
 
         public sealed class HiddenManiaRuleset : ManiaRuleset
         {
             public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
-            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new ScoreMultiplierCalculator(context);
+            public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableManiaScoreV2MultiplierCalculator(context);
         }
 
         /// <summary>

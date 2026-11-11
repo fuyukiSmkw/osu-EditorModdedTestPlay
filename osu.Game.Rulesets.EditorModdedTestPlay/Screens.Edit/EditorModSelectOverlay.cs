@@ -1,12 +1,17 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using osu.Framework.Bindables;
 using osu.Framework.Graphics;
+using osu.Framework.Graphics.Containers;
 using osu.Framework.Testing;
 using osu.Game.Overlays;
 using osu.Game.Overlays.Mods;
+using osu.Game.Rulesets;
 using osu.Game.Rulesets.EditorModdedTestPlay.Mods;
+using osu.Game.Rulesets.EditorModdedTestPlay.Scoring;
 using osu.Game.Rulesets.Mods;
 
 namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit
@@ -18,6 +23,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit
     public partial class EditorModSelectOverlay : UserModSelectOverlay
     {
         private readonly ModState scoreV2State = new ModState(new EditorModdedTestPlayScoreV2());
+        private readonly Bindable<RulesetInfo?> displayRuleset = new Bindable<RulesetInfo?>();
         private bool synchronisingSelection;
 
         public EditorModSelectOverlay()
@@ -27,14 +33,30 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit
 
         protected override void LoadComplete()
         {
+            // Registered before base so that the display ruleset is already up to date when the
+            // base handler pushes the new ActiveMods value into the footer, avoiding a brief
+            // lazer-multiplier flash before the stable one is applied.
+            SelectedMods.BindValueChanged(_ =>
+            {
+                updateScoreV2State();
+                updateDisplayRuleset();
+            }, true);
+
             base.LoadComplete();
 
             scoreV2State.Active.BindValueChanged(onScoreV2ActiveChanged);
-            SelectedMods.BindValueChanged(_ => updateScoreV2State(), true);
+            Ruleset.BindValueChanged(_ => updateDisplayRuleset());
             AvailableMods.BindValueChanged(_ => Schedule(injectScoreV2));
 
             injectScoreV2();
         }
+
+        public override VisibilityContainer CreateFooterContent() => new ModSelectFooterContent(this)
+        {
+            Beatmap = { BindTarget = Beatmap },
+            ActiveMods = { BindTarget = ActiveMods },
+            Ruleset = { BindTarget = displayRuleset },
+        };
 
         private void injectScoreV2()
         {
@@ -57,6 +79,20 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit
             }
 
             updateScoreV2State();
+        }
+
+        /// <summary>
+        /// Makes the footer's score multiplier display use the hidden stable-ScoreV2 ruleset's
+        /// multiplier calculator while the editor-only ScoreV2 mod is selected.
+        /// </summary>
+        private void updateDisplayRuleset()
+        {
+            bool usingScoreV2 = SelectedMods.Value.Any(m => m is EditorModdedTestPlayScoreV2);
+
+            // A distinct RulesetInfo instance is important here because RulesetInfo equality is
+            // based on ShortName; otherwise switching between the normal and hidden rulesets would
+            // not raise a change notification on the footer's bindable.
+            displayRuleset.Value = usingScoreV2 ? HiddenScoreV2Rulesets.CreateDisplayInfo(Ruleset.Value) : Ruleset.Value;
         }
 
         private void updateScoreV2State()
