@@ -3,8 +3,6 @@
 
 #nullable enable
 
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using osu.Framework.Allocation;
 using osu.Framework.Bindables;
@@ -14,7 +12,6 @@ using osu.Game.Rulesets;
 using osu.Game.Rulesets.EditorModdedTestPlay.ListenerLoader.Utils;
 using osu.Game.Rulesets.EditorModdedTestPlay.Mods;
 using osu.Game.Rulesets.EditorModdedTestPlay.Scoring;
-using osu.Game.Rulesets.Mods;
 using osu.Game.Screens.Edit;
 using osu.Game.Screens.Menu;
 using osu.Game.Screens.Play;
@@ -26,7 +23,6 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit.GameplayTest
         private readonly Editor editor;
 
         private LeasedBindable<RulesetInfo>? hiddenRulesetLease;
-        private LeasedBindable<IReadOnlyList<Mod>>? playerModsLease;
 
         protected override double PlayerPushDelay => 1; // instant start
 
@@ -59,16 +55,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit.GameplayTest
             hiddenRulesetLease = new Bindable<RulesetInfo>(hiddenRuleset).BeginLease(true);
             scopedDependencies.CacheAs(hiddenRulesetLease);
 
-            // The ScoreV2 marker only exists to pick the hidden ruleset above. It is not part of any
-            // ruleset's mod list (`Player` validates this via `ModUtils.CheckModsBelongToRuleset()`,
-            // and mania's equivalent is `ManiaModScoreV2`, which our marker does not derive from),
-            // so strip it from the mods handed to the player.
-            IReadOnlyList<Mod> playerMods = editor.Mods.Value?.Where(m => m is not EditorModdedTestPlayScoreV2).ToArray()
-                                            ?? Array.Empty<Mod>();
-
-            playerModsLease = new Bindable<IReadOnlyList<Mod>>(playerMods).BeginLease(true);
-            scopedDependencies.CacheAs(playerModsLease);
-
+            // The ScoreV2 marker is intentionally left in the player's mod list. It derives from a
+            // mod type which every ruleset exposes (`ModScoreV2` / `ManiaModScoreV2`), so
+            // `Player`'s mod validation accepts it, and keeping it lets the HUD and results screen
+            // display it alongside the other mods.
             return scopedDependencies;
         }
 
@@ -97,7 +87,6 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit.GameplayTest
             base.Dispose(isDisposing);
 
             hiddenRulesetLease?.Return();
-            playerModsLease?.Return();
         }
     }
 }
