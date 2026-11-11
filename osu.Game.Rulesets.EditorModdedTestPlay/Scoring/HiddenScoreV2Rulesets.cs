@@ -6,7 +6,6 @@ using osu.Game.Rulesets.Mania;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Taiko;
-using osu.Game.Scoring;
 
 namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 {
@@ -70,7 +69,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public sealed class HiddenCatchRuleset : CatchRuleset
         {
-            public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
+            public override ScoreProcessor CreateScoreProcessor() => new StableCatchScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableCatchScoreV2MultiplierCalculator(context);
         }
 
@@ -78,36 +77,6 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         {
             public override ScoreProcessor CreateScoreProcessor() => new StableManiaScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableManiaScoreV2MultiplierCalculator(context);
-        }
-
-        /// <summary>
-        /// Placeholder processor used by rulesets whose stable ScoreV2 scoring has not been implemented yet.
-        /// </summary>
-        internal sealed partial class FixedScoreProcessor : ScoreProcessor
-        {
-            public const long FIXED_SCORE = 114514;
-
-            public FixedScoreProcessor(Ruleset ruleset)
-                : base(ruleset)
-            {
-            }
-
-            protected override double ComputeTotalScore(double comboProgress, double accuracyProgress, double bonusPortion)
-                => FIXED_SCORE;
-
-            // Keep the displayed score fixed before any judgement is applied (and for empty beatmaps).
-            protected override void Reset(bool storeResults)
-            {
-                base.Reset(storeResults);
-                TotalScore.Value = FIXED_SCORE;
-            }
-
-            public override void PopulateScore(ScoreInfo score)
-            {
-                base.PopulateScore(score);
-                score.TotalScoreWithoutMods = FIXED_SCORE;
-                score.TotalScore = FIXED_SCORE;
-            }
         }
     }
 }
