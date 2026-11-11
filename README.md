@@ -8,7 +8,7 @@
 
 # osu-EditorModdedTestPlay
 
-An osu!lazer custom ruleset that adds Mod Select into Editor so you can test play with mods.
+An osu!lazer custom ruleset that adds Mod Select (and Score V2!) into Editor so you can test play with mods.
 
 ## Showcase
 
