@@ -64,7 +64,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public sealed class HiddenTaikoRuleset : TaikoRuleset
         {
-            public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
+            public override ScoreProcessor CreateScoreProcessor() => new StableTaikoScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableTaikoScoreV2MultiplierCalculator(context);
         }
 
