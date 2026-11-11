@@ -25,8 +25,9 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Mods
         public override bool UserPlayable => true;
         public override LocalisableString Description => "Use osu!stable ScoreV2 scoring in editor test play.";
 
-        // ManiaModScoreV2 changes mania hit windows to their ScoreV2 variants. Editor test play still
-        // uses the fixed-score placeholder for mania, so leave the base beatmap/hit windows untouched.
+        // ManiaModScoreV2 changes mania hit windows to their ScoreV2 variants. stable scoring is
+        // implemented by the hidden ruleset's score processor, and editor test play intends to keep
+        // the beatmap's existing hit windows, so leave them untouched here.
         void IApplicableToBeatmap.ApplyToBeatmap(IBeatmap beatmap)
         {
         }

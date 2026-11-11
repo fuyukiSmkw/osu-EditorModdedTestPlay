@@ -76,13 +76,12 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public sealed class HiddenManiaRuleset : ManiaRuleset
         {
-            public override ScoreProcessor CreateScoreProcessor() => new FixedScoreProcessor(this);
+            public override ScoreProcessor CreateScoreProcessor() => new StableManiaScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableManiaScoreV2MultiplierCalculator(context);
         }
 
         /// <summary>
-        /// Temporary processor used to verify that the hidden ruleset's score processor is actually in use.
-        /// The real stable ScoreV2 formulas will replace this later.
+        /// Placeholder processor used by rulesets whose stable ScoreV2 scoring has not been implemented yet.
         /// </summary>
         internal sealed partial class FixedScoreProcessor : ScoreProcessor
         {
