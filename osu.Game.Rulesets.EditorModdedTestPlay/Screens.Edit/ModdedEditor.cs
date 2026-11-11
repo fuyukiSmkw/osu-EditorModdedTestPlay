@@ -49,7 +49,7 @@ public partial class ModdedEditor(EditorLoader? loader = null) : Editor(loader)
     [BackgroundDependencyLoader]
     private void load()
     {
-        LoadComponent(modSelectOverlay = new UserModSelectOverlay
+        LoadComponent(modSelectOverlay = new EditorModSelectOverlay
         {
             ShowPresets = true,
         });
