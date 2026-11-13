@@ -16,8 +16,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// </summary>
     /// <remarks>
     /// lazer only creates enough bonus ticks to reach its "full score" RPM (430 at OD10).
-    /// stable keeps awarding bonus score for every extra spin up to a hard cap of 477 RPM,
-    /// so editor test play would otherwise underestimate spinner-heavy scores.
+    /// stable has no RPM-based bonus cap: its only limit is processing at most one half-spin per
+    /// frame (SpinnerOsu clamps each frame's rotation delta to π radians, i.e. ~900 RPM at 60 fps),
+    /// so bonus score keeps accruing for every extra full spin. The tick count here is extended
+    /// using 477 RPM as a practical upper bound on achievable rotation speed.
     /// </remarks>
     internal sealed class StableSpinner : Spinner
     {

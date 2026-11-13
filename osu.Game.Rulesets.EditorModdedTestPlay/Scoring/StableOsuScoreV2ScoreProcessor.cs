@@ -24,6 +24,13 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// the slider head/ticks/repeats/tail emit their own nested judgements (and affect score) while the
     /// displayed judgement remains the aggregated slider result.
     /// </para>
+    /// <para>
+    /// Slider and spinner aggregate tiers are recomputed from stable's rules (which consider the
+    /// slider head's timing tier and the spinner's half-spin count) because lazer's classic
+    /// aggregates tier them differently near the boundaries. lazer's own aggregate result type is
+    /// left untouched, so the <see cref="ScoreProcessor.Accuracy"/> bindable can still diverge from
+    /// stable in those edge cases.
+    /// </para>
     /// </remarks>
     internal sealed partial class StableOsuScoreV2ScoreProcessor : ScoreProcessor
     {
@@ -72,6 +79,20 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         /// Snapshots recorded for rewind support. Reverts are applied in reverse order.
         /// </summary>
         private readonly List<StableState> stateHistory = new List<StableState>();
+
+        /// <summary>
+        /// Per top-level slider/spinner progress used to recompute stable's aggregate judgement
+        /// tiers (see <see cref="getSliderAggregateValue"/> and <see cref="getSpinnerAggregateValue"/>).
+        /// </summary>
+        private readonly Dictionary<HitObject, TopLevelProgress> topLevelProgress = new Dictionary<HitObject, TopLevelProgress>();
+
+        /// <summary>
+        /// Maps nested hit objects to their top-level parent, built lazily from <see cref="Beatmap"/>.
+        /// Nested results can interleave in time (e.g. overlapping sliders), so progress is keyed by
+        /// the parent object rather than tracked globally.
+        /// </summary>
+        private Dictionary<HitObject, HitObject>? nestedParents;
+        private IBeatmap? nestedParentsBeatmap;
 
         public StableOsuScoreV2ScoreProcessor(Ruleset ruleset)
             : base(ruleset)
@@ -172,7 +193,19 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         protected override void ApplyScoreChange(JudgementResult result)
         {
-            stateHistory.Add(new StableState(stableScore, stableBonus, stableCombo, stableHighestCombo, topLevelJudged));
+            // Nested results (slider parts / spinner ticks) mutate their parent's progress entry,
+            // so capture the previous state for rewind before applying the result.
+            ProgressSnapshot progressSnapshot = default;
+            bool hasProgressSnapshot = false;
+
+            if (getNestedParents().TryGetValue(result.HitObject, out HitObject? parent))
+            {
+                topLevelProgress.TryGetValue(parent, out TopLevelProgress? entry);
+                progressSnapshot = new ProgressSnapshot(parent, entry);
+                hasProgressSnapshot = true;
+            }
+
+            stateHistory.Add(new StableState(stableScore, stableBonus, stableCombo, stableHighestCombo, topLevelJudged, progressSnapshot, hasProgressSnapshot));
 
             applyResult(result);
         }
@@ -190,6 +223,21 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             stableCombo = state.Combo;
             stableHighestCombo = state.HighestCombo;
             topLevelJudged = state.TopLevelJudged;
+
+            if (state.HasProgressSnapshot)
+            {
+                if (state.Progress.Existed)
+                {
+                    TopLevelProgress progress = getOrCreateProgress(state.Progress.Key);
+                    progress.NestedHitCount = state.Progress.NestedHitCount;
+                    progress.HeadJudged = state.Progress.HeadJudged;
+                    progress.HeadHit = state.Progress.HeadHit;
+                    progress.HeadTimeOffset = state.Progress.HeadTimeOffset;
+                    progress.SpinnerHitTicks = state.Progress.SpinnerHitTicks;
+                }
+                else
+                    topLevelProgress.Remove(state.Progress.Key);
+            }
         }
 
         private void applyResult(JudgementResult result)
@@ -201,9 +249,12 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 return;
 
             // Spinner ticks and spinner bonus ticks are added straight to stable's bonus portion (B).
+            // Every hit tick also represents one completed full rotation, which feeds into stable's
+            // spinner aggregate tier.
             if (type == HitResult.SmallBonus)
             {
                 stableBonus += spinner_tick_value;
+                addSpinnerHitTick(result.HitObject);
                 return;
             }
 
@@ -217,6 +268,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 if (result.HitObject is StableSpinnerBonusTick { AwardsNormalTick: true })
                     stableBonus += spinner_tick_value;
 
+                addSpinnerHitTick(result.HitObject);
                 return;
             }
 
@@ -226,17 +278,21 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             bool increasesCombo;
             bool isTopLevel;
 
-            if (hitObject is Slider)
+            if (hitObject is Slider slider)
             {
                 // stable's slider aggregate does not increase combo, but still contributes to S using
-                // the combo number inherited from the last nested result.
-                value = getTopLevelValue(type);
+                // the combo number inherited from the last nested result. Its tier is recomputed from
+                // stable's rules rather than lazer's, since lazer's classic aggregate ignores the
+                // slider head's timing tier.
+                value = getSliderAggregateValue(slider, type);
                 increasesCombo = false;
                 isTopLevel = true;
             }
-            else if (hitObject is Spinner)
+            else if (hitObject is Spinner spinner)
             {
-                value = getTopLevelValue(type);
+                // stable tiers spinners by half-spins achieved, which can differ from lazer's
+                // progress-based tiers near the boundaries.
+                value = getSpinnerAggregateValue(spinner, type);
                 increasesCombo = true;
                 isTopLevel = true;
             }
@@ -255,7 +311,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             else if (hitObject is SliderHeadCircle || hitObject is SliderRepeat || hitObject is SliderTailCircle)
             {
                 value = type.IsHit() ? slider_part_value : 0;
-                increasesCombo = true;
+
+                // stable's slider tail miss (-524288) only drains HP without resetting the combo,
+                // unlike head/repeat misses (-262144).
+                increasesCombo = hitObject is SliderTailCircle ? type.IsHit() : true;
                 isTopLevel = false;
             }
             else
@@ -266,8 +325,11 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 isTopLevel = false;
             }
 
+            if (hitObject is SliderHeadCircle || hitObject is SliderRepeat || hitObject is SliderTailCircle || hitObject is SliderTick)
+                updateSliderProgress(result, hitObject);
+
             if (increasesCombo)
-                stableCombo = type.IsHit() ? stableCombo + 1 : 0;
+                stableCombo = value > 0 ? stableCombo + 1 : 0;
 
             stableHighestCombo = Math.Max(stableHighestCombo, stableCombo);
 
@@ -300,6 +362,173 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             }
         }
 
+        /// <summary>
+        /// Recomputes stable's slider aggregate tier from the tracked nested results.
+        /// </summary>
+        /// <remarks>
+        /// stable (SliderOsu.ScoreIncrease) awards 300 only when every nested object was hit and the
+        /// head was a 300; 100 when at least half were hit and the head was 100-or-better; 50 when
+        /// anything was hit; and a miss otherwise. lazer's classic aggregate ignores the head's
+        /// timing tier, so the tier has to be recomputed here from the head's time offset.
+        /// </remarks>
+        private int getSliderAggregateValue(Slider slider, HitResult lazerType)
+        {
+            if (!topLevelProgress.TryGetValue(slider, out TopLevelProgress? progress) || !progress.HeadJudged)
+                return getTopLevelValue(lazerType);
+
+            int total = slider.NestedHitObjects.Count;
+
+            if (total <= 0)
+                return getTopLevelValue(lazerType);
+
+            int hit = progress.NestedHitCount;
+            int headTier = getHeadTier(progress);
+
+            if (hit == total && headTier >= 300)
+                return 300;
+
+            if (hit * 2 >= total && headTier >= 100)
+                return 100;
+
+            if (hit > 0)
+                return 50;
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Determines the stable tier of the slider head from its time offset, using stable's
+        /// integer-truncated hit windows (strictly less-than comparisons).
+        /// </summary>
+        private int getHeadTier(TopLevelProgress progress)
+        {
+            if (!progress.HeadJudged || !progress.HeadHit)
+                return 0;
+
+            (int window300, int window100, int window50) = getStableHitWindows();
+            double error = Math.Abs(progress.HeadTimeOffset);
+
+            if (error < window300)
+                return 300;
+
+            if (error < window100)
+                return 100;
+
+            if (error < window50)
+                return 50;
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Recomputes stable's spinner aggregate tier from the tracked hit ticks.
+        /// </summary>
+        /// <remarks>
+        /// stable (SpinnerOsu.ScoreIncrease) scores spinners in half-spins: 300 for more than
+        /// <c>R</c> half-spins, 100 for more than <c>R - 2</c>, 50 for at least <c>R / 4</c> and a
+        /// miss below that, where <c>R</c> is the half-spin requirement. Each lazer hit tick
+        /// represents one completed full rotation, i.e. two half-spins.
+        /// </remarks>
+        private int getSpinnerAggregateValue(Spinner spinner, HitResult lazerType)
+        {
+            if (!topLevelProgress.TryGetValue(spinner, out TopLevelProgress? progress))
+                return getTopLevelValue(lazerType);
+
+            double od = Beatmap.Value?.BeatmapInfo.Difficulty.OverallDifficulty ?? 5;
+            int rotationRequirement = (int)(spinner.Duration / 1000 * IBeatmapDifficultyInfo.DifficultyRange(od, 3.0, 5.0, 7.5));
+            int halfSpins = progress.SpinnerHitTicks * 2;
+
+            if (rotationRequirement == 0)
+                return 300;
+
+            if (halfSpins < Math.Max(0, rotationRequirement / 4))
+                return 0;
+
+            if (halfSpins > rotationRequirement)
+                return 300;
+
+            if (halfSpins > rotationRequirement - 2)
+                return 100;
+
+            return 50;
+        }
+
+        /// <summary>
+        /// Returns stable's osu! hit windows, which are truncated to integers
+        /// (HitObjectManager.cs: <c>(int)MapDifficultyRange(...)</c>).
+        /// </summary>
+        private (int Window300, int Window100, int Window50) getStableHitWindows()
+        {
+            double od = Beatmap.Value?.BeatmapInfo.Difficulty.OverallDifficulty ?? 5;
+
+            int window300 = (int)IBeatmapDifficultyInfo.DifficultyRange(od, 80.0, 50.0, 20.0);
+            int window100 = (int)IBeatmapDifficultyInfo.DifficultyRange(od, 140.0, 100.0, 60.0);
+            int window50 = (int)IBeatmapDifficultyInfo.DifficultyRange(od, 200.0, 150.0, 100.0);
+
+            return (window300, window100, window50);
+        }
+
+        private void updateSliderProgress(JudgementResult result, HitObject nested)
+        {
+            if (!getNestedParents().TryGetValue(nested, out HitObject? parent) || parent is not Slider)
+                return;
+
+            TopLevelProgress progress = getOrCreateProgress(parent);
+
+            if (result.Type.IsHit())
+                progress.NestedHitCount++;
+
+            if (nested is SliderHeadCircle)
+            {
+                progress.HeadJudged = true;
+                progress.HeadHit = result.Type.IsHit();
+                progress.HeadTimeOffset = result.TimeOffset;
+            }
+        }
+
+        private void addSpinnerHitTick(HitObject tick)
+        {
+            if (!getNestedParents().TryGetValue(tick, out HitObject? parent) || parent is not Spinner)
+                return;
+
+            getOrCreateProgress(parent).SpinnerHitTicks++;
+        }
+
+        private Dictionary<HitObject, HitObject> getNestedParents()
+        {
+            IBeatmap? beatmap = Beatmap.Value;
+
+            if (nestedParents != null && ReferenceEquals(nestedParentsBeatmap, beatmap))
+                return nestedParents;
+
+            var parents = new Dictionary<HitObject, HitObject>();
+
+            if (beatmap != null)
+            {
+                foreach (HitObject hitObject in beatmap.HitObjects)
+                {
+                    foreach (HitObject nested in hitObject.NestedHitObjects)
+                        parents[nested] = hitObject;
+                }
+            }
+
+            nestedParents = parents;
+            nestedParentsBeatmap = beatmap;
+
+            return parents;
+        }
+
+        private TopLevelProgress getOrCreateProgress(HitObject key)
+        {
+            if (!topLevelProgress.TryGetValue(key, out TopLevelProgress? progress))
+            {
+                progress = new TopLevelProgress();
+                topLevelProgress[key] = progress;
+            }
+
+            return progress;
+        }
+
         protected override void Reset(bool storeResults)
         {
             if (storeResults)
@@ -319,6 +548,9 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             stableHighestCombo = 0;
             topLevelJudged = 0;
             stateHistory.Clear();
+            topLevelProgress.Clear();
+            nestedParents = null;
+            nestedParentsBeatmap = null;
         }
 
         public override void PopulateScore(ScoreInfo score)
@@ -367,15 +599,62 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             public readonly int Combo;
             public readonly int HighestCombo;
             public readonly int TopLevelJudged;
+            public readonly bool HasProgressSnapshot;
+            public readonly ProgressSnapshot Progress;
 
-            public StableState(double score, double bonus, int combo, int highestCombo, int topLevelJudged)
+            public StableState(double score, double bonus, int combo, int highestCombo, int topLevelJudged, ProgressSnapshot progress, bool hasProgressSnapshot)
             {
                 Score = score;
                 Bonus = bonus;
                 Combo = combo;
                 HighestCombo = highestCombo;
                 TopLevelJudged = topLevelJudged;
+                Progress = progress;
+                HasProgressSnapshot = hasProgressSnapshot;
             }
+        }
+
+        /// <summary>
+        /// A copy of a top-level object's <see cref="TopLevelProgress"/> taken before a nested
+        /// result is applied, used to rewind the tracking state.
+        /// </summary>
+        private readonly struct ProgressSnapshot
+        {
+            public readonly HitObject Key;
+            public readonly bool Existed;
+            public readonly int NestedHitCount;
+            public readonly bool HeadJudged;
+            public readonly bool HeadHit;
+            public readonly double HeadTimeOffset;
+            public readonly int SpinnerHitTicks;
+
+            public ProgressSnapshot(HitObject key, TopLevelProgress? progress)
+            {
+                Key = key;
+                Existed = progress != null;
+                NestedHitCount = progress?.NestedHitCount ?? 0;
+                HeadJudged = progress?.HeadJudged ?? false;
+                HeadHit = progress?.HeadHit ?? false;
+                HeadTimeOffset = progress?.HeadTimeOffset ?? 0;
+                SpinnerHitTicks = progress?.SpinnerHitTicks ?? 0;
+            }
+        }
+
+        /// <summary>
+        /// Stable-side per-object progress needed to recompute aggregate judgement tiers.
+        /// </summary>
+        private sealed class TopLevelProgress
+        {
+            /// <summary>The number of nested slider objects (head/ticks/repeats/tail) judged as hits.</summary>
+            public int NestedHitCount;
+
+            /// <summary>Whether the slider head has been judged, and its result and time offset.</summary>
+            public bool HeadJudged;
+            public bool HeadHit;
+            public double HeadTimeOffset;
+
+            /// <summary>The number of spinner ticks judged as hits (one completed full rotation each).</summary>
+            public int SpinnerHitTicks;
         }
     }
 }
