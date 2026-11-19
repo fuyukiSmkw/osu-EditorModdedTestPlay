@@ -14,6 +14,7 @@ using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Osu.Mods;
 using osu.Game.Rulesets.Osu.Objects;
 using osu.Game.Rulesets.Scoring;
+using osu.Game.Scoring;
 using osu.Game.Rulesets.EditorModdedTestPlay.Scoring;
 using osuTK;
 
@@ -294,6 +295,161 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Tests
             processor.PopulateScore(score);
             Assert.That(score.TotalScoreWithoutMods, Is.EqualTo(expectedWithoutMods));
             Assert.That(score.TotalScore, Is.EqualTo(expectedTotal));
+        }
+
+        [TestCase(10, 0, 0, 0, ScoreRank.X)]
+        [TestCase(10, 1, 0, 0, ScoreRank.S)]
+        [TestCase(9, 1, 0, 0, ScoreRank.A)]
+        [TestCase(9, 0, 0, 1, ScoreRank.B)]
+        [TestCase(8, 2, 0, 0, ScoreRank.B)]
+        [TestCase(7, 3, 0, 0, ScoreRank.C)]
+        [TestCase(6, 4, 0, 0, ScoreRank.D)]
+        public void TestClassicRankFromScore(int count300, int count100, int count50, int countMiss, ScoreRank expected)
+        {
+            var processor = new StableOsuScoreV2ScoreProcessor(new HiddenScoreV2Rulesets.HiddenOsuRuleset());
+            processor.Mods.Value = new Mod[] { new OsuModClassic() };
+
+            var results = new Dictionary<HitResult, int>
+            {
+                [HitResult.Great] = count300,
+                [HitResult.Ok] = count100,
+                [HitResult.Meh] = count50,
+                [HitResult.Miss] = countMiss,
+            };
+
+            Assert.That(processor.RankFromScore(0, results), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void TestSpinnerRequirementUsesModAdjustedDifficulty()
+        {
+            var beatmap = new Beatmap
+            {
+                BeatmapInfo = new BeatmapInfo
+                {
+                    Difficulty = new BeatmapDifficulty { OverallDifficulty = 5 },
+                    Ruleset = new OsuRuleset().RulesetInfo,
+                },
+                HitObjects = new List<HitObject>
+                {
+                    new Spinner { StartTime = 1000, EndTime = 3000 },
+                },
+            };
+
+            var working = new FlatWorkingBeatmap(beatmap);
+            var hiddenInfo = new HiddenScoreV2Rulesets.HiddenOsuRuleset().RulesetInfo;
+            var playable = working.GetPlayableBeatmap(hiddenInfo, new Mod[] { new OsuModHardRock() });
+            var spinner = playable.HitObjects.OfType<StableSpinner>().Single();
+
+            double clearRps = IBeatmapDifficultyInfo.DifficultyRange(playable.Difficulty.OverallDifficulty, Spinner.CLEAR_RPM_RANGE) / 60;
+            int expected = (int)(clearRps * (spinner.Duration / 1000) * 2);
+
+            Assert.That(playable.Difficulty.OverallDifficulty, Is.GreaterThan(5));
+            Assert.That(spinner.LegacyHalfSpinsRequired, Is.EqualTo(expected));
+        }
+
+        [TestCase(20, 0, 0, 0, 1.0, ScoreRank.X, 20)]
+        [TestCase(19, 0, 0, 1, 0.95, ScoreRank.A, 19)]
+        [TestCase(3, 0, 0, 1, 0.75, ScoreRank.C, 3)]
+        public void TestScoreV2RankAndAccuracy(int count300, int count100, int count50, int countMiss, double expectedAccuracy, ScoreRank expectedRank, int expectedMaxCombo)
+        {
+            var circles = Enumerable.Range(0, count300 + count100 + count50 + countMiss)
+                                    .Select(i => new HitCircle { StartTime = i * 1000 })
+                                    .ToArray();
+
+            foreach (HitCircle circle in circles)
+                circle.ApplyDefaults(new ControlPointInfo(), new BeatmapDifficulty());
+
+            var processor = new StableOsuScoreV2ScoreProcessor(new HiddenScoreV2Rulesets.HiddenOsuRuleset());
+            processor.ApplyBeatmap(createBeatmap(circles));
+
+            int index = 0;
+
+            for (int i = 0; i < count300; i++)
+                apply(processor, circles[index++], HitResult.Great);
+
+            for (int i = 0; i < count100; i++)
+                apply(processor, circles[index++], HitResult.Ok);
+
+            for (int i = 0; i < count50; i++)
+                apply(processor, circles[index++], HitResult.Meh);
+
+            for (int i = 0; i < countMiss; i++)
+                apply(processor, circles[index++], HitResult.Miss);
+
+            var score = new osu.Game.Scoring.ScoreInfo { Ruleset = new HiddenScoreV2Rulesets.HiddenOsuRuleset().RulesetInfo };
+            processor.PopulateScore(score);
+
+            Assert.That(score.Accuracy, Is.EqualTo(expectedAccuracy).Within(0.000001));
+            Assert.That(score.Rank, Is.EqualTo(expectedRank));
+            Assert.That(score.MaxCombo, Is.EqualTo(expectedMaxCombo));
+            Assert.That(score.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(count300));
+            Assert.That(score.Statistics.GetValueOrDefault(HitResult.Ok), Is.EqualTo(count100));
+            Assert.That(score.Statistics.GetValueOrDefault(HitResult.Meh), Is.EqualTo(count50));
+            Assert.That(score.Statistics.GetValueOrDefault(HitResult.Miss), Is.EqualTo(countMiss));
+        }
+
+        [Test]
+        public void TestClassicSliderStatisticsAndDisplayMapping()
+        {
+            var slider = new Slider
+            {
+                StartTime = 1000,
+                ClassicSliderBehaviour = true,
+                Path = new SliderPath(PathType.LINEAR, new[] { Vector2.Zero, new Vector2(350, 0) }, 350),
+            };
+
+            slider.ApplyDefaults(new ControlPointInfo(), new BeatmapDifficulty { SliderMultiplier = 1, SliderTickRate = 1 });
+
+            var processor = new StableOsuScoreV2ScoreProcessor(new HiddenScoreV2Rulesets.HiddenOsuRuleset());
+            processor.ApplyBeatmap(createBeatmap(new HitObject[] { slider }));
+
+            foreach (HitObject nested in slider.NestedHitObjects)
+                apply(processor, nested, nested.Judgement.MaxResult);
+
+            apply(processor, slider, slider.Judgement.MaxResult);
+
+            int largeTicks = 1
+                             + slider.NestedHitObjects.OfType<SliderRepeat>().Count()
+                             + slider.NestedHitObjects.OfType<SliderTick>().Count();
+
+            var score = new osu.Game.Scoring.ScoreInfo { Ruleset = new HiddenScoreV2Rulesets.HiddenOsuRuleset().RulesetInfo };
+            processor.PopulateScore(score);
+
+            Assert.That(score.Statistics[HitResult.LargeTickHit], Is.EqualTo(largeTicks));
+            Assert.That(score.Statistics[HitResult.SmallTickHit], Is.EqualTo(1));
+            Assert.That(score.Statistics[HitResult.Great], Is.EqualTo(1));
+            Assert.That(score.MaximumStatistics[HitResult.LargeTickHit], Is.EqualTo(largeTicks));
+            Assert.That(score.MaximumStatistics[HitResult.SmallTickHit], Is.EqualTo(1));
+            Assert.That(score.Accuracy, Is.EqualTo(1));
+            Assert.That(score.Rank, Is.EqualTo(ScoreRank.X));
+            Assert.That(score.MaxCombo, Is.EqualTo(largeTicks + 1));
+
+            var display = score.GetStatisticsForDisplay().ToList();
+            var tickRow = display.Single(d => d.Result == HitResult.LargeTickHit);
+            var endRow = display.Single(d => d.Result == HitResult.SmallTickHit);
+
+            Assert.That(tickRow.DisplayName.ToString(), Is.EqualTo("slider tick"));
+            Assert.That(tickRow.Count, Is.EqualTo(largeTicks));
+            Assert.That(tickRow.MaxCount, Is.EqualTo(largeTicks));
+            Assert.That(endRow.DisplayName.ToString(), Is.EqualTo("slider end"));
+            Assert.That(display.Any(d => d.Result is HitResult.LargeTickMiss or HitResult.SmallTickMiss or HitResult.SliderTailHit), Is.False);
+        }
+
+        [Test]
+        public void TestConverterReplacesEditorNativeSpinner()
+        {
+            var beatmap = createBeatmap(new HitObject[] { new Spinner { StartTime = 1000, EndTime = 3000 } });
+            var converter = new HiddenScoreV2Rulesets.HiddenOsuRuleset().CreateBeatmapConverter(beatmap);
+
+            Assert.That(converter.Convert().HitObjects.Single(), Is.InstanceOf<StableSpinner>());
+        }
+
+        [Test]
+        public void TestSliderHeadHidesStockLargeTickResult()
+        {
+            var head = new StableDrawableSliderHead(new SliderHeadCircle());
+            Assert.That(head.DisplayResult, Is.False);
         }
 
         [Test]

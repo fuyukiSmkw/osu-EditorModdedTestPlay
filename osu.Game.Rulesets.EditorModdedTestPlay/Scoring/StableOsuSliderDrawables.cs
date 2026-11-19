@@ -25,6 +25,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     {
         public HitResult RawHitResult { get; private set; } = HitResult.None;
 
+        // The real head result must stay LargeTickHit/Miss for scoring and the parent aggregate.
+        // The playfield emits a separate raw 100/50/miss judgement for display instead.
+        public override bool DisplayResult => false;
+
         public StableDrawableSliderHead()
         {
         }

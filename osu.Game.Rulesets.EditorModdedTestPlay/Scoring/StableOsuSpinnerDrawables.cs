@@ -55,6 +55,11 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// <summary>
     /// A spinner whose ticks and aggregate judgement follow osu!stable's ScoreV2 half-spin model.
     /// </summary>
+    /// <remarks>
+    /// g0v0's Classic-only <c>ExclusiveLegacyInput</c> (restricting overlapping spinner input to the
+    /// first active spinner) is not reproduced because NuGet 2026.916.0 lacks the corresponding
+    /// <c>DrawableSpinner.CanTrack</c> hook. This only affects maps with simultaneous spinners.
+    /// </remarks>
     internal sealed partial class StableDrawableSpinner : DrawableSpinner
     {
         private readonly List<DrawableSpinnerTick> stableTicks = new List<DrawableSpinnerTick>();

@@ -100,22 +100,38 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             foreach (OsuHitObject hitObject in base.ConvertHitObject(original, beatmap, cancellationToken))
             {
                 if (hitObject is Spinner spinner)
-                {
-                    yield return new StableSpinner
-                    {
-                        StartTime = spinner.StartTime,
-                        Samples = spinner.Samples,
-                        EndTime = spinner.EndTime,
-                        Position = spinner.Position,
-                        NewCombo = spinner.NewCombo,
-                        ComboOffset = spinner.ComboOffset,
-                    };
-                }
+                    yield return createStableSpinner(spinner);
                 else
-                {
                     yield return hitObject;
-                }
             }
+        }
+
+        protected override Beatmap<OsuHitObject> ConvertBeatmap(IBeatmap original, CancellationToken cancellationToken)
+        {
+            Beatmap<OsuHitObject> beatmap = base.ConvertBeatmap(original, cancellationToken);
+
+            // Editor beatmaps already contain OsuHitObject instances. BeatmapConverter keeps those
+            // as-is and never calls ConvertHitObject, so replace any remaining spinners here.
+            for (int i = 0; i < beatmap.HitObjects.Count; i++)
+            {
+                if (beatmap.HitObjects[i] is Spinner spinner && spinner is not StableSpinner)
+                    beatmap.HitObjects[i] = createStableSpinner(spinner);
+            }
+
+            return beatmap;
+        }
+
+        private static StableSpinner createStableSpinner(Spinner spinner)
+        {
+            return new StableSpinner
+            {
+                StartTime = spinner.StartTime,
+                Samples = spinner.Samples,
+                EndTime = spinner.EndTime,
+                Position = spinner.Position,
+                NewCombo = spinner.NewCombo,
+                ComboOffset = spinner.ComboOffset,
+            };
         }
     }
 
@@ -127,6 +143,12 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// contributes to the stable ScoreV2 score) while the visible judgement remains the aggregated
     /// slider result. This is applied both before nested objects are created and after mods have run,
     /// so the Classic mod's own slider head option cannot turn it off.
+    /// <para>
+    /// g0v0's Classic-only fixed-checkpoint/tail-leniency behaviour (<c>ClassicSliderJudgement</c>)
+    /// is not reproduced: NuGet 2026.916.0 does not expose the required private
+    /// <c>SliderInputManager</c> state. This only affects late/early tick recovery, not the scoring
+    /// formula or the aggregate result types.
+    /// </para>
     /// </remarks>
     internal sealed class StableOsuBeatmapProcessor : OsuBeatmapProcessor
     {

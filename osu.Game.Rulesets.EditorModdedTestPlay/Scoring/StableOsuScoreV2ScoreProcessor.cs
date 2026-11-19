@@ -7,6 +7,7 @@ using System.Reflection;
 using osu.Game.Beatmaps;
 using osu.Game.Rulesets.Judgements;
 using osu.Game.Rulesets.Objects;
+using osu.Game.Rulesets.Osu.Mods;
 using osu.Game.Rulesets.Osu.Objects;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Scoring;
@@ -258,6 +259,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public override ScoreRank RankFromScore(double accuracy, IReadOnlyDictionary<HitResult, int> results)
         {
+            // g0v0 uses stable's classic letter grades whenever the Classic mod is active.
+            if (Mods.Value.Any(m => m is OsuModClassic))
+                return classicRankFromScore(results);
+
             ScoreRank rank = base.RankFromScore(accuracy, results);
 
             // Match osu!'s rank handling: a score with misses cannot be S or SS.
@@ -265,6 +270,36 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 rank = ScoreRank.A;
 
             return rank;
+        }
+
+        private static ScoreRank classicRankFromScore(IReadOnlyDictionary<HitResult, int> results)
+        {
+            int count300 = results.GetValueOrDefault(HitResult.Great);
+            int count100 = results.GetValueOrDefault(HitResult.Ok);
+            int count50 = results.GetValueOrDefault(HitResult.Meh);
+            int countMiss = results.GetValueOrDefault(HitResult.Miss);
+
+            int total = count300 + count100 + count50 + countMiss;
+
+            if (total == 0 || count300 == total)
+                return ScoreRank.X;
+
+            double ratio300 = (double)count300 / total;
+            double ratio50 = (double)count50 / total;
+
+            if (ratio300 > 0.9 && ratio50 < 0.01 && countMiss == 0)
+                return ScoreRank.S;
+
+            if ((ratio300 > 0.8 && countMiss == 0) || ratio300 > 0.9)
+                return ScoreRank.A;
+
+            if ((ratio300 > 0.7 && countMiss == 0) || ratio300 > 0.8)
+                return ScoreRank.B;
+
+            if (ratio300 > 0.6)
+                return ScoreRank.C;
+
+            return ScoreRank.D;
         }
     }
 }
