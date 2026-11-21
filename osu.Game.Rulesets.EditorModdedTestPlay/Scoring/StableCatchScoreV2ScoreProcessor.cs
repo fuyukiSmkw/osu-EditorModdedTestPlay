@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using osu.Game.Beatmaps;
+using osu.Game.Rulesets.Catch.Beatmaps;
 using osu.Game.Rulesets.Judgements;
+using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Scoring;
 
@@ -76,6 +78,15 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         {
         }
 
+        /// <summary>
+        /// stable builds its maximum-score snapshot by walking the flat, time-sorted object list
+        /// (its HP-drain simulation), not by recursively visiting each container's nested objects first.
+        /// This distinction changes the combo values assigned to objects when a juice stream overlaps
+        /// other top-level objects, and therefore changes <c>maxSum</c> and the final score.
+        /// </summary>
+        protected override IEnumerable<HitObject> EnumerateHitObjects(IBeatmap beatmap)
+            => CatchBeatmap.GetPalpableObjects(beatmap.HitObjects);
+
         public override int GetBaseScoreForResult(HitResult result)
         {
             switch (result)
@@ -86,6 +97,11 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 case HitResult.LargeTickHit:
                 case HitResult.SmallTickHit:
                     return 300;
+
+                // stable's ScoreChangeFruits gives bananas 200 base score, although bonus
+                // judgements never enter the accuracy portion.
+                case HitResult.LargeBonus:
+                    return banana_value;
 
                 default:
                     return 0;
@@ -170,22 +186,21 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             {
                 maximumStableScore = stableScore;
 
+                // The autoplay simulation judges every fruit, droplet and tiny droplet.
+                // Large droplets are *purposefully* not counted in the split, to match stable.
+                maximumFruit = ScoreResultCounts.GetValueOrDefault(HitResult.Great);
+                maximumTiny = ScoreResultCounts.GetValueOrDefault(HitResult.SmallTickHit);
+
+                int divisor = maximumFruit + maximumTiny;
+                fruitTinyScale = divisor == 0 ? 0 : (double)maximumTiny / divisor;
+
                 // Banana bonus is not part of stable's normalised maximum.
                 stableBonus = 0;
             }
 
+            // base.Reset() calls updateScore() before clearing the simulation state. The maximum
+            // fields must already be populated by then, otherwise MaximumTotalScore is stored as 0.
             base.Reset(storeResults);
-
-            if (storeResults)
-            {
-                // The autoplay simulation judges every fruit, droplet and tiny droplet.
-                // Large droplets are *purposefully* not counted in the split, to match stable.
-                maximumFruit = MaximumResultCounts.GetValueOrDefault(HitResult.Great);
-                maximumTiny = MaximumResultCounts.GetValueOrDefault(HitResult.SmallTickHit);
-
-                int divisor = maximumFruit + maximumTiny;
-                fruitTinyScale = divisor == 0 ? 0 : (double)maximumTiny / divisor;
-            }
 
             stableScore = 0;
             stableBonus = 0;
@@ -207,18 +222,42 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public override ScoreRank RankFromScore(double accuracy, IReadOnlyDictionary<HitResult, int> results)
         {
-            if (accuracy == accuracy_cutoff_x)
+            // stable computes accuracy as a float from the raw result counts and uses strict
+            // greater-than comparisons. Reproducing the float arithmetic matters at exact
+            // boundaries (for example 47/50 = 94% is a B in stable, not an A).
+            float stableAccuracy = computeStableAccuracy(results);
+
+            if (stableAccuracy == 1f)
                 return ScoreRank.X;
-            if (accuracy >= accuracy_cutoff_s)
+            if ((double)stableAccuracy > accuracy_cutoff_s)
                 return ScoreRank.S;
-            if (accuracy >= accuracy_cutoff_a)
+            if ((double)stableAccuracy > accuracy_cutoff_a)
                 return ScoreRank.A;
-            if (accuracy >= accuracy_cutoff_b)
+            if ((double)stableAccuracy > accuracy_cutoff_b)
                 return ScoreRank.B;
-            if (accuracy >= accuracy_cutoff_c)
+            if ((double)stableAccuracy > accuracy_cutoff_c)
                 return ScoreRank.C;
 
             return ScoreRank.D;
+        }
+
+        /// <summary>
+        /// stable's catch accuracy: every caught fruit, droplet and tiny droplet contributes
+        /// equally. Missed droplets count as misses, while missed tiny droplets count as katu.
+        /// </summary>
+        private static float computeStableAccuracy(IReadOnlyDictionary<HitResult, int> results)
+        {
+            int count300 = results.GetValueOrDefault(HitResult.Great);
+            int count100 = results.GetValueOrDefault(HitResult.LargeTickHit);
+            int count50 = results.GetValueOrDefault(HitResult.SmallTickHit);
+            int countMiss = results.GetValueOrDefault(HitResult.Miss) + results.GetValueOrDefault(HitResult.LargeTickMiss);
+            int countKatu = results.GetValueOrDefault(HitResult.SmallTickMiss);
+
+            int total = count300 + count100 + count50 + countMiss + countKatu;
+
+            return total == 0
+                ? 1f
+                : (float)(count300 + count100 + count50) / (float)total;
         }
 
         public override double AccuracyCutoffFromRank(ScoreRank rank)
