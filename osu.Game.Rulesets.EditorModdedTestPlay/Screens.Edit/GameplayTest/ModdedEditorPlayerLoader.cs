@@ -38,11 +38,17 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Screens.Edit.GameplayTest
 
         protected override IReadOnlyDependencyContainer CreateChildDependencies(IReadOnlyDependencyContainer parent)
         {
-            var dependencies = base.CreateChildDependencies(parent);
-
             if (editor.Mods.Value?.Any(m => m is EditorModdedTestPlayScoreV2) != true)
-                return dependencies;
+            {
+                StableTaikoBeatmaps.SelectedMods = null;
+                return base.CreateChildDependencies(parent);
+            }
 
+            // taiko's stable-compatible swell requirement depends on rate mods, and the beatmap
+            // processor does not receive them. Snapshot them before the playable beatmap is built.
+            StableTaikoBeatmaps.SelectedMods = editor.Mods.Value.ToArray();
+
+            var dependencies = base.CreateChildDependencies(parent);
             var hiddenRuleset = HiddenScoreV2Rulesets.CreateInfo(Ruleset.Value);
 
             if (hiddenRuleset == null)

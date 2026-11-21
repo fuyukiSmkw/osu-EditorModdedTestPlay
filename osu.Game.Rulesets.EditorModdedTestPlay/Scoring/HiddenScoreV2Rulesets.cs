@@ -1,11 +1,14 @@
 #nullable enable
 
+using System.Collections.Generic;
 using osu.Game.Beatmaps;
 using osu.Game.Rulesets.Catch;
 using osu.Game.Rulesets.Mania;
+using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Taiko;
+using osu.Game.Rulesets.UI;
 
 namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 {
@@ -59,12 +62,14 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableOsuScoreV2MultiplierCalculator(context);
             public override IBeatmapConverter CreateBeatmapConverter(IBeatmap beatmap) => new StableOsuBeatmapConverter(beatmap, this);
             public override IBeatmapProcessor CreateBeatmapProcessor(IBeatmap beatmap) => new StableOsuBeatmapProcessor(beatmap);
+            public override DrawableRuleset CreateDrawableRulesetWith(IBeatmap beatmap, IReadOnlyList<Mod>? mods = null) => new StableDrawableOsuRuleset(this, beatmap, mods);
         }
 
         public sealed class HiddenTaikoRuleset : TaikoRuleset
         {
             public override ScoreProcessor CreateScoreProcessor() => new StableTaikoScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableTaikoScoreV2MultiplierCalculator(context);
+            public override IBeatmapProcessor CreateBeatmapProcessor(IBeatmap beatmap) => new StableTaikoBeatmapProcessor(beatmap);
         }
 
         public sealed class HiddenCatchRuleset : CatchRuleset
@@ -77,6 +82,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         {
             public override ScoreProcessor CreateScoreProcessor() => new StableManiaScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableManiaScoreV2MultiplierCalculator(context);
+            public override DrawableRuleset CreateDrawableRulesetWith(IBeatmap beatmap, IReadOnlyList<Mod>? mods = null) => new StableDrawableManiaRuleset(this, beatmap, mods);
         }
     }
 }

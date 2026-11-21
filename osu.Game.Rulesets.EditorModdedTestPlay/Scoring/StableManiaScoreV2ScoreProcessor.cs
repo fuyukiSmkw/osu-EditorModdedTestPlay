@@ -240,19 +240,25 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public override ScoreRank RankFromScore(double accuracy, IReadOnlyDictionary<HitResult, int> results)
         {
-            ScoreRank rank = base.RankFromScore(accuracy, results);
+            // osu!stable's mania rank cutoffs. Unlike lazer's mania processor, an SS is only
+            // awarded when accuracy is exactly 100%; an all-300 (GREAT) play is an S.
+            // Hidden/Flashlight/FadeIn still upgrade X -> XH and S -> SH through their mods.
+            if (accuracy == 1)
+                return ScoreRank.X;
 
-            if (rank != ScoreRank.S)
-                return rank;
+            if (accuracy > 0.95)
+                return ScoreRank.S;
 
-            // Match lazer mania's rank handling: SS requires every note to be at least a 300.
-            bool anyImperfect =
-                results.GetValueOrDefault(HitResult.Good) > 0
-                || results.GetValueOrDefault(HitResult.Ok) > 0
-                || results.GetValueOrDefault(HitResult.Meh) > 0
-                || results.GetValueOrDefault(HitResult.Miss) > 0;
+            if (accuracy > 0.9)
+                return ScoreRank.A;
 
-            return anyImperfect ? rank : ScoreRank.X;
+            if (accuracy > 0.8)
+                return ScoreRank.B;
+
+            if (accuracy > 0.7)
+                return ScoreRank.C;
+
+            return ScoreRank.D;
         }
 
         private double getScoreMultiplier()

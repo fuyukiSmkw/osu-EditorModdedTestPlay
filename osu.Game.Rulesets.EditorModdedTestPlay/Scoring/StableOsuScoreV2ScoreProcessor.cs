@@ -2,9 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using osu.Game.Beatmaps;
 using osu.Game.Rulesets.Judgements;
 using osu.Game.Rulesets.Objects;
+using osu.Game.Rulesets.Osu.Mods;
 using osu.Game.Rulesets.Osu.Objects;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Scoring;
@@ -20,9 +23,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// where <c>S</c> is the combo-weighted sum of hit values, <c>B</c> is the bonus sum and
     /// <c>completion</c> is the fraction of top-level hit objects which have been judged.
     /// <para>
-    /// Sliders are forced into classic behaviour by <see cref="StableOsuBeatmapProcessor"/>, which means
-    /// the slider head/ticks/repeats/tail emit their own nested judgements (and affect score) while the
-    /// displayed judgement remains the aggregated slider result.
+    /// Sliders are forced into classic behaviour by <see cref="StableOsuBeatmapProcessor"/>, and the
+    /// custom slider/spinner drawables emit stable's aggregate result types directly. The processor
+    /// can therefore use the parent result type as-is for the combo-weighted sum, and delegate combo,
+    /// accuracy and raw portion bookkeeping (including rewinds) to the base <see cref="ScoreProcessor"/>.
     /// </para>
     /// </remarks>
     internal sealed partial class StableOsuScoreV2ScoreProcessor : ScoreProcessor
@@ -33,45 +37,29 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         // stable hit values for the osu! ruleset.
         private const int slider_tick_value = 10;
         private const int slider_part_value = 30;
-        private const int spinner_tick_value = 100;
 
-        // stable's ScoreV2 result for a bonus spinner spin (0x4000). Note that this differs from the
-        // 1100 used by the legacy (ScoreV1) simulator.
+        // stable's ScoreV2 result for a spinner tick (0x1) and bonus spin (0x4000). Note that the
+        // bonus value differs from the 1100 used by the legacy (ScoreV1) simulator.
+        private const int spinner_tick_value = 100;
         private const int spinner_bonus_tick_value = 500;
 
         /// <summary>
-        /// The combo-weighted score sum (<c>S</c> in stable's formula).
+        /// Slider tails which were missed. stable still awards the slider parent's 300/100/50 value,
+        /// but the parent's combo increment only stands in for the tail when the tail was hit.
         /// </summary>
-        private double stableScore;
+        private readonly HashSet<SliderTailCircle> missedTails = new HashSet<SliderTailCircle>();
 
         /// <summary>
-        /// The bonus score sum (<c>B</c> in stable's formula).
+        /// The most recently computed unrounded score. <see cref="ScoreInfo.TotalScore"/> is rounded
+        /// from this value once, matching stable's single-rounding rule.
         /// </summary>
-        private double stableBonus;
+        private double lastUnmodifiedScore;
 
-        /// <summary>
-        /// stable's per-result combo counter. Unlike <see cref="ScoreProcessor.Combo"/>, this also counts
-        /// nested slider objects and is only used to weight <see cref="stableScore"/>.
-        /// </summary>
-        private int stableCombo;
-
-        /// <summary>
-        /// stable's highest combo achieved during the current play.
-        /// </summary>
-        private int stableHighestCombo;
-
-        /// <summary>
-        /// The number of top-level (circle/slider/spinner) judgements applied so far.
-        /// </summary>
-        private int topLevelJudged;
-
-        private double maximumStableScore;
-        private int maximumTopLevelJudged;
-
-        /// <summary>
-        /// Snapshots recorded for rewind support. Reverts are applied in reverse order.
-        /// </summary>
-        private readonly List<StableState> stateHistory = new List<StableState>();
+        // The NuGet base class snapshots ComboAfterJudgement before ApplyScoreChange(), while
+        // g0v0 snapshots it after. The setters are internal, so the tail correction has to be
+        // written back through reflection for delta-based rewinds to restore the right combo.
+        private static readonly PropertyInfo combo_after_judgement = typeof(JudgementResult).GetProperty(nameof(JudgementResult.ComboAfterJudgement))!;
+        private static readonly PropertyInfo highest_combo_after_judgement = typeof(JudgementResult).GetProperty(nameof(JudgementResult.HighestComboAfterJudgement))!;
 
         public StableOsuScoreV2ScoreProcessor(Ruleset ruleset)
             : base(ruleset)
@@ -82,10 +70,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         /// Enumerates hit objects in the order osu!stable's max-score simulation uses.
         /// </summary>
         /// <remarks>
-        /// stable's simulation adds all of a slider's 30-point parts (head, repeats, tail) before its
-        /// 10-point ticks, regardless of the order in which they are judged during gameplay. Because
-        /// the score is normalised against the maximum produced by that simulation, the same ordering
-        /// has to be reproduced here for the final score to match stable exactly.
+        /// stable's simulation groups the 30-point slider head/repeats before the 10-point ticks,
+        /// then judges the tail last (the parent supplies its combo). Because the score is normalised
+        /// against the maximum produced by that simulation, the same ordering has to be reproduced
+        /// here for the final score to match stable exactly.
         /// </remarks>
         protected override IEnumerable<HitObject> EnumerateHitObjects(IBeatmap beatmap)
         {
@@ -93,17 +81,11 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             {
                 if (hitObject is Slider slider)
                 {
-                    foreach (HitObject nested in slider.NestedHitObjects)
-                    {
-                        if (nested is SliderHeadCircle || nested is SliderRepeat || nested is SliderTailCircle)
-                            yield return nested;
-                    }
-
-                    foreach (HitObject nested in slider.NestedHitObjects)
-                    {
-                        if (nested is SliderTick)
-                            yield return nested;
-                    }
+                    // stable's simulation keeps the tail last: its combo is supplied by the parent
+                    // judgement, and the tick `-2` adjustment below accounts for moving the tail
+                    // after the ticks.
+                    foreach (HitObject nested in slider.NestedHitObjects.OrderBy(o => o is SliderTailCircle ? 2 : o is SliderTick ? 1 : 0))
+                        yield return nested;
 
                     yield return slider;
                 }
@@ -152,190 +134,116 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             }
         }
 
-        protected override double ComputeTotalScore(double comboProgress, double accuracyProgress, double bonusPortion)
+        protected override double GetComboScoreChange(JudgementResult result)
         {
-            // comboProgress/accuracyProgress/bonusPortion are lazer's V1 accounting; ignore them.
-            return computeUnmodifiedScore();
-        }
-
-        private double computeUnmodifiedScore()
-        {
-            if (maximumStableScore <= 0 || maximumTopLevelJudged <= 0)
+            if (!result.IsHit)
                 return 0;
 
-            double completion = (double)Math.Min(topLevelJudged, maximumTopLevelJudged) / maximumTopLevelJudged;
+            double baseScore;
 
-            return 700000 * stableScore / maximumStableScore
-                   + 300000 * Math.Pow(Accuracy.Value, 10) * completion
-                   + stableBonus;
+            if (result.HitObject is SliderTick)
+                baseScore = slider_tick_value;
+            else if (result.HitObject is SliderHeadCircle || result.HitObject is SliderTailCircle || result.HitObject is SliderRepeat)
+                baseScore = slider_part_value;
+            else if (result.HitObject is HitCircle || result.HitObject is Slider || result.HitObject is Spinner)
+            {
+                baseScore = result.Type switch
+                {
+                    HitResult.Great => 300,
+                    HitResult.Ok => 100,
+                    HitResult.Meh => 50,
+                    _ => 0,
+                };
+            }
+            else
+                baseScore = GetBaseScoreForResult(result.Type);
+
+            if (baseScore <= 0)
+                return 0;
+
+            int combo = result.ComboAfterJudgement;
+
+            // A missed tail prevents the parent from supplying the tail's combo increment.
+            if (result.HitObject is Slider slider && missedTails.Contains(slider.TailCircle))
+                combo = result.ComboAtJudgement;
+
+            if (result.HitObject is SliderTailCircle)
+                combo++;
+
+            // stable's simulation judges the 30-point checkpoints before the 10-point ticks.
+            // This adjustment keeps the simulated tick weighting equal to stable's ordering.
+            if (result.HitObject is SliderTick && IsSimulating)
+                combo = Math.Max(0, combo - 2);
+
+            return baseScore * (1 + combo / combo_weight_divisor);
+        }
+
+        protected override double GetBonusScoreChange(JudgementResult result)
+        {
+            if (result.HitObject is SpinnerBonusTick)
+                return spinner_bonus_tick_value;
+
+            if (result.HitObject is SpinnerTick)
+                return spinner_tick_value;
+
+            return base.GetBonusScoreChange(result);
         }
 
         protected override void ApplyScoreChange(JudgementResult result)
         {
-            stateHistory.Add(new StableState(stableScore, stableBonus, stableCombo, stableHighestCombo, topLevelJudged));
+            if (result.HitObject is SliderTailCircle tail && !result.IsHit)
+                missedTails.Add(tail);
 
-            applyResult(result);
+            // The classic parent judgement supplies the tail combo only when the tail was hit.
+            if (result.HitObject is Slider slider && result.IsHit && missedTails.Contains(slider.TailCircle))
+            {
+                Combo.Value--;
+                HighestCombo.Value = Math.Max(result.HighestComboAtJudgement, Combo.Value);
+
+                // Unlike g0v0's base class, the NuGet base snapshots ComboAfterJudgement before
+                // ApplyScoreChange, so the tail correction has to be written back manually for
+                // delta-based rewinds to restore the right combo.
+                combo_after_judgement.SetValue(result, Combo.Value);
+                highest_combo_after_judgement.SetValue(result, HighestCombo.Value);
+            }
         }
 
         protected override void RemoveScoreChange(JudgementResult result)
         {
-            if (stateHistory.Count == 0)
-                return;
-
-            StableState state = stateHistory[^1];
-            stateHistory.RemoveAt(stateHistory.Count - 1);
-
-            stableScore = state.Score;
-            stableBonus = state.Bonus;
-            stableCombo = state.Combo;
-            stableHighestCombo = state.HighestCombo;
-            topLevelJudged = state.TopLevelJudged;
+            if (result.HitObject is SliderTailCircle tail)
+                missedTails.Remove(tail);
         }
 
-        private void applyResult(JudgementResult result)
+        protected override double ComputeTotalScore(double comboProgress, double accuracyProgress, double bonusPortion)
         {
-            HitResult type = result.Type;
+            // Under ScoreV2, only top-level judgements count towards completion. The base
+            // accuracyProgress also counts nested slider ticks, so it cannot be used directly.
+            int maximumHits = MaximumResultCounts.Where(r => r.Key.IsBasic()).Sum(r => r.Value);
+            int hits = ScoreResultCounts.Where(r => r.Key.IsBasic()).Sum(r => r.Value);
+            double completion = maximumHits > 0 ? (double)hits / maximumHits : 1;
 
-            // IgnoreHit / IgnoreMiss are not scorable and must not affect the stable counters.
-            if (!type.IsScorable())
-                return;
+            lastUnmodifiedScore = 700000 * comboProgress
+                                  + 300000 * Math.Pow(Accuracy.Value, 10) * completion
+                                  + bonusPortion;
 
-            // Spinner ticks and spinner bonus ticks are added straight to stable's bonus portion (B).
-            if (type == HitResult.SmallBonus)
-            {
-                stableBonus += spinner_tick_value;
-                return;
-            }
-
-            if (type == HitResult.LargeBonus)
-            {
-                stableBonus += spinner_bonus_tick_value;
-
-                // Depending on the spinner's difficulty, stable may also award the regular
-                // 100-point tick on the same full spin. lazer's spinner model replaces the normal
-                // tick with the bonus tick, so it has to be added back manually where applicable.
-                if (result.HitObject is StableSpinnerBonusTick { AwardsNormalTick: true })
-                    stableBonus += spinner_tick_value;
-
-                return;
-            }
-
-            HitObject hitObject = result.HitObject;
-
-            int value;
-            bool increasesCombo;
-            bool isTopLevel;
-
-            if (hitObject is Slider)
-            {
-                // stable's slider aggregate does not increase combo, but still contributes to S using
-                // the combo number inherited from the last nested result.
-                value = getTopLevelValue(type);
-                increasesCombo = false;
-                isTopLevel = true;
-            }
-            else if (hitObject is Spinner)
-            {
-                value = getTopLevelValue(type);
-                increasesCombo = true;
-                isTopLevel = true;
-            }
-            else if (hitObject is HitCircle && hitObject is not SliderHeadCircle && hitObject is not SliderTailCircle && hitObject is not SliderRepeat)
-            {
-                value = getTopLevelValue(type);
-                increasesCombo = true;
-                isTopLevel = true;
-            }
-            else if (hitObject is SliderTick)
-            {
-                value = type.IsHit() ? slider_tick_value : 0;
-                increasesCombo = true;
-                isTopLevel = false;
-            }
-            else if (hitObject is SliderHeadCircle || hitObject is SliderRepeat || hitObject is SliderTailCircle)
-            {
-                value = type.IsHit() ? slider_part_value : 0;
-                increasesCombo = true;
-                isTopLevel = false;
-            }
-            else
-            {
-                // Unknown object type: fall back to the top-level value without affecting completion.
-                value = getTopLevelValue(type);
-                increasesCombo = type.IncreasesCombo();
-                isTopLevel = false;
-            }
-
-            if (increasesCombo)
-                stableCombo = type.IsHit() ? stableCombo + 1 : 0;
-
-            stableHighestCombo = Math.Max(stableHighestCombo, stableCombo);
-
-            if (value > 0)
-                stableScore += value * (1 + stableCombo / combo_weight_divisor);
-
-            if (isTopLevel)
-                topLevelJudged++;
-        }
-
-        private static int getTopLevelValue(HitResult type)
-        {
-            switch (type)
-            {
-                case HitResult.Perfect:
-                case HitResult.Great:
-                    return 300;
-
-                case HitResult.Good:
-                    return 200;
-
-                case HitResult.Ok:
-                    return 100;
-
-                case HitResult.Meh:
-                    return 50;
-
-                default:
-                    return 0;
-            }
+            return lastUnmodifiedScore;
         }
 
         protected override void Reset(bool storeResults)
         {
-            if (storeResults)
-            {
-                maximumStableScore = stableScore;
-                maximumTopLevelJudged = topLevelJudged;
-
-                // Bonus score is not part of stable's normalised maximum.
-                stableBonus = 0;
-            }
-
             base.Reset(storeResults);
 
-            stableScore = 0;
-            stableBonus = 0;
-            stableCombo = 0;
-            stableHighestCombo = 0;
-            topLevelJudged = 0;
-            stateHistory.Clear();
+            missedTails.Clear();
+            lastUnmodifiedScore = 0;
         }
 
         public override void PopulateScore(ScoreInfo score)
         {
             base.PopulateScore(score);
 
-            double unmodified = computeUnmodifiedScore();
-            double multiplier = getScoreMultiplier();
-
-            score.TotalScoreWithoutMods = (long)Math.Round(unmodified);
-            // stable rounds the final multiplied score only once.
-            score.TotalScore = (long)Math.Round(unmodified * multiplier);
-
-            // stable's live combo counts nested slider parts but not the aggregated slider result,
-            // which differs from lazer's base combo accounting.
-            score.Combo = stableCombo;
-            score.MaxCombo = stableHighestCombo;
+            // base.PopulateScore applies the multiplier to the already-rounded unmodified score.
+            // stable rounds the unmodified score and the multiplied score independently.
+            score.TotalScore = (long)Math.Round(lastUnmodifiedScore * getScoreMultiplier());
         }
 
         private double getScoreMultiplier()
@@ -351,6 +259,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
         public override ScoreRank RankFromScore(double accuracy, IReadOnlyDictionary<HitResult, int> results)
         {
+            // g0v0 uses stable's classic letter grades whenever the Classic mod is active.
+            if (Mods.Value.Any(m => m is OsuModClassic))
+                return classicRankFromScore(results);
+
             ScoreRank rank = base.RankFromScore(accuracy, results);
 
             // Match osu!'s rank handling: a score with misses cannot be S or SS.
@@ -360,22 +272,34 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             return rank;
         }
 
-        private readonly struct StableState
+        private static ScoreRank classicRankFromScore(IReadOnlyDictionary<HitResult, int> results)
         {
-            public readonly double Score;
-            public readonly double Bonus;
-            public readonly int Combo;
-            public readonly int HighestCombo;
-            public readonly int TopLevelJudged;
+            int count300 = results.GetValueOrDefault(HitResult.Great);
+            int count100 = results.GetValueOrDefault(HitResult.Ok);
+            int count50 = results.GetValueOrDefault(HitResult.Meh);
+            int countMiss = results.GetValueOrDefault(HitResult.Miss);
 
-            public StableState(double score, double bonus, int combo, int highestCombo, int topLevelJudged)
-            {
-                Score = score;
-                Bonus = bonus;
-                Combo = combo;
-                HighestCombo = highestCombo;
-                TopLevelJudged = topLevelJudged;
-            }
+            int total = count300 + count100 + count50 + countMiss;
+
+            if (total == 0 || count300 == total)
+                return ScoreRank.X;
+
+            double ratio300 = (double)count300 / total;
+            double ratio50 = (double)count50 / total;
+
+            if (ratio300 > 0.9 && ratio50 < 0.01 && countMiss == 0)
+                return ScoreRank.S;
+
+            if ((ratio300 > 0.8 && countMiss == 0) || ratio300 > 0.9)
+                return ScoreRank.A;
+
+            if ((ratio300 > 0.7 && countMiss == 0) || ratio300 > 0.8)
+                return ScoreRank.B;
+
+            if (ratio300 > 0.6)
+                return ScoreRank.C;
+
+            return ScoreRank.D;
         }
     }
 }

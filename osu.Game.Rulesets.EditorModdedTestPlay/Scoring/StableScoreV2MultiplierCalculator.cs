@@ -18,8 +18,8 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
     /// <list type="bullet">
     /// <item><description>ignores NoFail (x1.0 instead of x0.5),</description></item>
     /// <item><description>uses a flat x1.1 for HardRock,</description></item>
-    /// <item><description>uses a flat x1.2 for DoubleTime/Nightcore,</description></item>
-    /// <item><description>uses a flat x0.3 for HalfTime/Daycore,</description></item>
+    /// <item><description>scales DoubleTime/Nightcore with the configured rate (x1.2 at the default 1.5x),</description></item>
+    /// <item><description>uses the project's stable-compatible HalfTime/Daycore rate formula (x0.3 at the default 0.75x),</description></item>
     /// <item><description>gives the Classic mod x1.0.</description></item>
     /// </list>
     /// </remarks>
@@ -32,16 +32,16 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
             Single<OsuModEasy>(hasMultiplier: 0.5);
             // NoFail is intentionally not registered: stable ScoreV2 gives it x1.0.
-            Single<OsuModHalfTime>(hasMultiplier: 0.3);
-            Single<OsuModDaycore>(hasMultiplier: 0.3);
+            Single<OsuModHalfTime>(hasMultiplier: m => halfTimeMultiplier(m.SpeedChange.Value));
+            Single<OsuModDaycore>(hasMultiplier: m => halfTimeMultiplier(m.SpeedChange.Value));
 
             #endregion
 
             #region Difficulty Increase
 
             Single<OsuModHardRock>(hasMultiplier: 1.1);
-            Single<OsuModDoubleTime>(hasMultiplier: 1.2);
-            Single<OsuModNightcore>(hasMultiplier: 1.2);
+            Single<OsuModDoubleTime>(hasMultiplier: m => doubleTimeMultiplier(m.SpeedChange.Value));
+            Single<OsuModNightcore>(hasMultiplier: m => doubleTimeMultiplier(m.SpeedChange.Value));
             Single<OsuModHidden>(hasMultiplier: 1.06);
             Single<OsuModFlashlight>(hasMultiplier: 1.12);
 
@@ -57,6 +57,20 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
 
             // OsuModClassic and every other mod keep the default x1.0 multiplier.
         }
+
+        /// <summary>
+        /// stable ScoreV2's HalfTime/Daycore multiplier for a custom rate.
+        /// </summary>
+        /// <remarks>
+        /// stable uses x0.3 at the default 0.75x rate. The project applies the same linear rate
+        /// relationship to other selectable rates (0.5x..0.99x), without an artificial floor.
+        /// </remarks>
+        private static double halfTimeMultiplier(double speed) => Math.Round(speed - 0.45, 4);
+
+        /// <summary>
+        /// g0v0's ScoreV2 DoubleTime/Nightcore multiplier, which is x1.2 at the default 1.5x rate.
+        /// </summary>
+        private static double doubleTimeMultiplier(double speed) => Math.Round(1.0 + (speed - 1.0) * 0.40, 4);
     }
 
     /// <summary>
