@@ -69,6 +69,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         {
             public override ScoreProcessor CreateScoreProcessor() => new StableTaikoScoreV2ScoreProcessor(this);
             public override ScoreMultiplierCalculator CreateScoreMultiplierCalculator(ScoreMultiplierContext context) => new StableTaikoScoreV2MultiplierCalculator(context);
+            public override IBeatmapProcessor CreateBeatmapProcessor(IBeatmap beatmap) => new StableTaikoBeatmapProcessor(beatmap);
         }
 
         public sealed class HiddenCatchRuleset : CatchRuleset

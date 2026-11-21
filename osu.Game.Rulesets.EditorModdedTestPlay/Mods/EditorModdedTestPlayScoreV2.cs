@@ -1,7 +1,10 @@
 using osu.Framework.Localisation;
 using osu.Game.Beatmaps;
+using osu.Game.Rulesets.EditorModdedTestPlay.Scoring;
 using osu.Game.Rulesets.Mania.Mods;
 using osu.Game.Rulesets.Mods;
+using osu.Game.Rulesets.Taiko.Objects;
+using osu.Game.Rulesets.UI;
 
 namespace osu.Game.Rulesets.EditorModdedTestPlay.Mods
 {
@@ -17,7 +20,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Mods
     /// (osu!/taiko/catch expose <see cref="ModScoreV2"/>, mania exposes <see cref="ManiaModScoreV2"/>),
     /// which is what <c>Player</c> validates against.
     /// </remarks>
-    public class EditorModdedTestPlayScoreV2 : ManiaModScoreV2, IApplicableToBeatmap
+    public class EditorModdedTestPlayScoreV2 : ManiaModScoreV2, IApplicableToBeatmap, IApplicableToDrawableRuleset<TaikoHitObject>
     {
         // Keep the same name/acronym/icon as the real ScoreV2 marker, but make it selectable
         // in the editor's mod select overlay. It is deliberately not added to the global mod list.
@@ -30,6 +33,14 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Mods
         // the beatmap's existing hit windows, so leave them untouched here.
         void IApplicableToBeatmap.ApplyToBeatmap(IBeatmap beatmap)
         {
+        }
+
+        void IApplicableToDrawableRuleset<TaikoHitObject>.ApplyToDrawableRuleset(DrawableRuleset<TaikoHitObject> drawableRuleset)
+        {
+            // Replace the stock taiko pools so strong hit windows and drum roll completion follow
+            // stable's judging behaviour. This runs before hit objects are added to the playfield.
+            drawableRuleset.Playfield.RegisterPool<Hit, StableDrawableHit>(50);
+            drawableRuleset.Playfield.RegisterPool<DrumRoll, StableDrawableDrumRoll>(5);
         }
     }
 }

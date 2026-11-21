@@ -81,9 +81,14 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         private readonly Dictionary<DrumRoll, int> drumRollHitCounts = new Dictionary<DrumRoll, int>();
 
         /// <summary>
-        /// The combo and result of each strong hit's parent, used when the nested strong hit is judged.
+        /// The number of ticks hit for each swell, used to determine its completion result.
         /// </summary>
-        private readonly Dictionary<Hit, (HitResult Result, int Combo)> strongHitParents = new Dictionary<Hit, (HitResult Result, int Combo)>();
+        private readonly Dictionary<Swell, int> swellHitCounts = new Dictionary<Swell, int>();
+
+        /// <summary>
+        /// The result of each strong hit's parent, used when the nested strong hit is judged.
+        /// </summary>
+        private readonly Dictionary<Hit, HitResult> strongHitParents = new Dictionary<Hit, HitResult>();
 
         /// <summary>
         /// Snapshots recorded for rewind support. Reverts are applied in reverse order.
@@ -170,8 +175,9 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             {
                 int totalHits = count300 + count100 + countMiss;
 
+                // stable's ScoreTaiko.Accuracy returns 0 when no hits have been judged.
                 if (totalHits == 0)
-                    return 1;
+                    return 0;
 
                 return (count100 * 150.0 + count300 * 300.0) / (totalHits * 300.0);
             }
@@ -180,12 +186,16 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
         protected override void ApplyScoreChange(JudgementResult result)
         {
             DrumRoll? tickHitParent = null;
+            Swell? swellTickParent = null;
 
             if (result.Type == HitResult.SmallBonus && result.HitObject is DrumRollTick tick)
                 tickHitParent = tick.Parent;
 
+            if (result.Type == HitResult.IgnoreHit && result.HitObject is StableSwellTick swellTick)
+                swellTickParent = swellTick.Parent;
+
             stateHistory.Add(new StableState(stableScore, stableBonus, stableCombo, stableHighestCombo, topLevelJudged,
-                count300, count100, countMiss, tickHitParent));
+                count300, count100, countMiss, tickHitParent, swellTickParent));
 
             applyResult(result);
         }
@@ -205,6 +215,15 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                     drumRollHitCounts.Remove(state.TickHitParent);
                 else
                     drumRollHitCounts[state.TickHitParent] = hits;
+            }
+
+            if (state.SwellTickParent != null)
+            {
+                int hits = swellHitCounts.GetValueOrDefault(state.SwellTickParent) - 1;
+                if (hits <= 0)
+                    swellHitCounts.Remove(state.SwellTickParent);
+                else
+                    swellHitCounts[state.SwellTickParent] = hits;
             }
 
             stableScore = state.Score;
@@ -250,7 +269,15 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 return;
             }
 
-            if (result.HitObject is Swell)
+            if (result.HitObject is StableSwellTick swellTick)
+            {
+                if (type == HitResult.IgnoreHit)
+                    swellHitCounts[swellTick.Parent] = swellHitCounts.GetValueOrDefault(swellTick.Parent) + 1;
+
+                return;
+            }
+
+            if (result.HitObject is Swell swell)
             {
                 if (type == HitResult.LargeBonus)
                 {
@@ -260,10 +287,29 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                     stableScore += great_value * comboFactor(stableCombo);
                     topLevelJudged++;
                 }
-                else if (type == HitResult.IgnoreMiss)
+                else if (type == HitResult.IgnoreMiss || type == HitResult.Miss)
                 {
-                    stableCombo = 0;
-                    countMiss++;
+                    // stable requires requiredHits + 1 successful presses for a 300 and
+                    // more than half of the base rotation requirement for a 100.
+                    int rotationRequirement = swell is StableTaikoSwell stableSwell
+                        ? stableSwell.StableRotationRequirement
+                        : swell.RequiredHits;
+
+                    int hits = IsSimulating ? rotationRequirement + 1 : swellHitCounts.GetValueOrDefault(swell);
+                    int remaining = rotationRequirement - hits;
+
+                    if (remaining < rotationRequirement / 2)
+                    {
+                        increaseCombo();
+                        count100++;
+                        stableScore += great_value * comboFactor(stableCombo);
+                    }
+                    else
+                    {
+                        stableCombo = 0;
+                        countMiss++;
+                    }
+
                     topLevelJudged++;
                 }
 
@@ -287,7 +333,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                         count300++;
                         stableScore += great_value * comboFactor(stableCombo);
                         topLevelJudged++;
-                        strongHitParents[hit] = (type, stableCombo);
+                        strongHitParents[hit] = type;
                         break;
 
                     case HitResult.Ok:
@@ -296,7 +342,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                         // stable's 100 is worth a full 300 in S (only accuracy halves it).
                         stableScore += great_value * comboFactor(stableCombo);
                         topLevelJudged++;
-                        strongHitParents[hit] = (type, stableCombo);
+                        strongHitParents[hit] = type;
                         break;
 
                     case HitResult.Miss:
@@ -318,12 +364,15 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             switch (strong.Parent)
             {
                 case Hit parentHit:
-                    if (!strongHitParents.TryGetValue(parentHit, out var parent))
+                    if (!strongHitParents.TryGetValue(parentHit, out HitResult parentResult))
                         return;
 
                     // A strong hit (300 or 100) is worth eight times the normal value in S.
-                    if (parent.Result == HitResult.Great || parent.Result == HitResult.Perfect || parent.Result == HitResult.Ok)
-                        stableScore += strong_hit_extra * comboFactor(parent.Combo);
+                    // stable scores the second press as a separate change, so it uses the combo
+                    // which is current when that press is judged (which may include a hit that
+                    // happened between the two presses).
+                    if (parentResult == HitResult.Great || parentResult == HitResult.Perfect || parentResult == HitResult.Ok)
+                        stableScore += strong_hit_extra * comboFactor(stableCombo);
                     break;
 
                 case DrumRollTick:
@@ -339,7 +388,8 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             int hitTicks = IsSimulating ? totalTicks : drumRollHitCounts.GetValueOrDefault(drumRoll);
 
             // stable's required hit fraction is min(0.3, 0.1 + OD / 30).
-            double overallDifficulty = Beatmap.Value?.BeatmapInfo.Difficulty.OverallDifficulty ?? 5;
+            // Use the working (post-mod) difficulty, matching stable's Beatmap.DifficultyOverall.
+            double overallDifficulty = Beatmap.Value?.Difficulty.OverallDifficulty ?? 5;
             double requiredFraction = Math.Min(0.3, 0.1 + overallDifficulty / 30.0);
             bool complete = totalTicks == 0 || hitTicks >= totalTicks * requiredFraction;
 
@@ -407,6 +457,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             count100 = 0;
             countMiss = 0;
             drumRollHitCounts.Clear();
+            swellHitCounts.Clear();
             strongHitParents.Clear();
             stateHistory.Clear();
         }
@@ -436,18 +487,37 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             score.MaximumStatistics[HitResult.Ok] = 0;
             score.MaximumStatistics[HitResult.Miss] = 0;
 
-            score.Rank = RankFromScore(stableAccuracy, score.Statistics);
+            // Keep the rank populated by base PopulateScore(): it respects ScoreRank.F for
+            // failed scores and applies IApplicableToScoreProcessor rank adjustments (HD/FL).
         }
 
         public override ScoreRank RankFromScore(double accuracy, IReadOnlyDictionary<HitResult, int> results)
         {
-            ScoreRank rank = base.RankFromScore(accuracy, results);
+            // stable taiko rank is based on the proportion of 300s, not on accuracy.
+            int totalHits = count300 + count100 + countMiss;
 
-            // Match taiko's rank handling: a score with misses cannot be S or SS.
-            if ((rank == ScoreRank.S || rank == ScoreRank.X) && countMiss > 0)
-                rank = ScoreRank.A;
+            if (totalHits == 0)
+                return ScoreRank.D;
 
-            return rank;
+            double ratio300 = (double)count300 / totalHits;
+            double ratio50 = 0; // taiko never produces 50s
+
+            if (ratio300 == 1)
+                return ScoreRank.X;
+
+            if (ratio300 > 0.9 && ratio50 <= 0.01 && countMiss == 0)
+                return ScoreRank.S;
+
+            if ((ratio300 > 0.8 && countMiss == 0) || ratio300 > 0.9)
+                return ScoreRank.A;
+
+            if ((ratio300 > 0.7 && countMiss == 0) || ratio300 > 0.8)
+                return ScoreRank.B;
+
+            if (ratio300 > 0.6)
+                return ScoreRank.C;
+
+            return ScoreRank.D;
         }
 
         private void syncDisplayedStats()
@@ -482,9 +552,10 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
             public readonly int Count100;
             public readonly int CountMiss;
             public readonly DrumRoll? TickHitParent;
+            public readonly Swell? SwellTickParent;
 
             public StableState(double score, double bonus, int combo, int highestCombo, int topLevelJudged,
-                int count300, int count100, int countMiss, DrumRoll? tickHitParent)
+                int count300, int count100, int countMiss, DrumRoll? tickHitParent, Swell? swellTickParent)
             {
                 Score = score;
                 Bonus = bonus;
@@ -495,6 +566,7 @@ namespace osu.Game.Rulesets.EditorModdedTestPlay.Scoring
                 Count100 = count100;
                 CountMiss = countMiss;
                 TickHitParent = tickHitParent;
+                SwellTickParent = swellTickParent;
             }
         }
     }
